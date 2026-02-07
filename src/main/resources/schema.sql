@@ -43,6 +43,20 @@ CREATE TABLE IF NOT EXISTS recommendation_feedback (
     INDEX idx_user_feedback (user_id, feedback)
 );
 
+-- Recommendation Cache Table
+CREATE TABLE IF NOT EXISTS recommendation_cache (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    job_id BIGINT NOT NULL,
+    match_score INT NOT NULL,
+    match_reasons TEXT,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_user_score (user_id, match_score DESC),
+    INDEX idx_expires (expires_at)
+);
+
 -- Sample test data for development
 
 -- Insert sample applications for test-user-123
