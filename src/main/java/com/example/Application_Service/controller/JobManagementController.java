@@ -10,9 +10,14 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+
+
+
 
 @RestController
 @RequestMapping("/api/v1/jobs")
@@ -104,28 +109,43 @@ public class JobManagementController {
     }
 
     private String extractUserId(HttpServletRequest request) {
+        // First, try to get userId from API Gateway headers (X-User-Id)
+        String userIdFromGateway = request.getHeader("X-User-Id");
+        if (userIdFromGateway != null && !userIdFromGateway.isEmpty()) {
+            log.debug("Extracted userId from API Gateway header: {}", userIdFromGateway);
+            return userIdFromGateway;
+        }
+
+        // Fallback: try to extract from Authorization header
         String authHeader = request.getHeader("Authorization");
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
             return extractUserIdFromToken(token);
         }
-        throw new UnauthorizedException("Invalid or missing Authorization header");
+
+        throw new UnauthorizedException("Invalid or missing Authorization header and X-User-Id header");
     }
 
     private String extractUserIdFromToken(String token) {
-        // In production, this would use JwtUtils from your auth service
         try {
-            // This is a placeholder - in production, use your JwtUtils class
-            // String userId = jwtUtils.getUserIdFromToken(token);
-            // return userId;
-            
-            // For testing purposes, return a mock user ID
-            return "test-user-123";
+            // Decode JWT without signature verification (API Gateway already validated)
+            String[] parts = token.split("\\.");
+            if (parts.length >= 2) {
+                String payload = new String(java.util.Base64.getUrlDecoder().decode(parts[1]));
+                ObjectMapper mapper = new ObjectMapper();
+                Map<String, Object> claims = mapper.readValue(payload, new TypeReference<Map<String, Object>>() {});
+                Object userId = claims.get("sub");
+                if (userId != null) {
+                    return userId.toString();
+                }
+            }
+            throw new UnauthorizedException("Could not extract userId from token");
         } catch (Exception e) {
             log.error("Error extracting user ID from token: {}", e.getMessage());
-            throw new UnauthorizedException("Invalid token");
+            throw new UnauthorizedException("Invalid token: " + e.getMessage());
         }
     }
+
 
     private static class UnauthorizedException extends RuntimeException {
         public UnauthorizedException(String message) {

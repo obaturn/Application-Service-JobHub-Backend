@@ -5,6 +5,7 @@ import com.example.Application_Service.dto.response.ApplicationDetailsResponse;
 import com.example.Application_Service.dto.response.ApplicationResponse;
 import com.example.Application_Service.dto.response.ApplicationStatsResponse;
 import com.example.Application_Service.dto.response.PagedResponse;
+import com.example.Application_Service.exception.UnauthorizedAccessException;
 import com.example.Application_Service.service.ApplicationService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -84,34 +85,28 @@ public class ApplicationController {
         return ResponseEntity.ok(applicationService.getApplicationStats(userId));
     }
 
+    /**
+     * Extracts userId from API Gateway headers.
+     * The API Gateway validates JWT tokens and forwards user info via headers.
+     * 
+     * Expected headers from API Gateway:
+     * - X-User-Id: The user's UUID
+     * - X-User-Email: The user's email (optional)
+     * - X-User-Type: The user's type/role (optional)
+     */
     private String extractUserId(HttpServletRequest request) {
-        String authHeader = request.getHeader("Authorization");
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            String token = authHeader.substring(7);
-            return extractUserIdFromToken(token);
+        // First try the API Gateway header
+        String userId = request.getHeader("X-User-Id");
+        if (userId != null && !userId.isEmpty()) {
+            return userId;
         }
-        throw new UnauthorizedException("Invalid or missing Authorization header");
-    }
-
-    private String extractUserIdFromToken(String token) {
-        // In production, this would use JwtUtils from your auth service
-        // For now, we'll return a placeholder
-        try {
-            // This is a placeholder - in production, use your JwtUtils class
-            // String userId = jwtUtils.getUserIdFromToken(token);
-            // return userId;
-            
-            // For testing purposes, return a mock user ID
-            return "test-user-123";
-        } catch (Exception e) {
-            log.error("Error extracting user ID from token: {}", e.getMessage());
-            throw new UnauthorizedException("Invalid token");
+        
+        // Fallback: Check for user ID in request attribute (set by gateway filter)
+        Object userIdAttr = request.getAttribute("userId");
+        if (userIdAttr != null) {
+            return userIdAttr.toString();
         }
-    }
-
-    private static class UnauthorizedException extends RuntimeException {
-        public UnauthorizedException(String message) {
-            super(message);
-        }
+        
+        throw new UnauthorizedAccessException("Missing user context. Ensure API Gateway forwards X-User-Id header.");
     }
 }
