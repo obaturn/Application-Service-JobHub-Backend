@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -15,11 +16,26 @@ public class SubmitApplicationRequest {
     @NotNull(message = "Job ID is required")
     private Long jobId;
 
+    /**
+     * Resume file upload (PDF, DOC, DOCX)
+     */
+    private MultipartFile resume;
+
+    /**
+     * Resume ID (if using external resume service)
+     * Use either resume or resumeId
+     */
     private String resumeId;
 
     private String coverLetter;
 
     private List<QuestionAnswer> answers;
+
+    /**
+     * Applicant details for notification events
+     */
+    private String applicantName;
+    private String applicantEmail;
 
     @Data
     @NoArgsConstructor

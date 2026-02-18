@@ -20,10 +20,15 @@ public class ApplicationResponse {
     private String status;
     private String appliedDate;
     private String resumeId;
+    private String resumeFileName;  // NEW: For frontend
     private String coverLetter;
     private String createdAt;
     private String updatedAt;
-
+    
+    // NEW: Applicant info for employer dashboard
+    private String applicantName;
+    private String applicantEmail;
+    
     @Data
     @Builder
     @NoArgsConstructor
@@ -33,6 +38,7 @@ public class ApplicationResponse {
         private String title;
         private String company;
         private String companyId;
+        private String employerId; // Added this field
         private String logo;
         private String location;
         private String type;
@@ -44,5 +50,16 @@ public class ApplicationResponse {
         private List<String> benefits;
         private String status;
         private String seniority;
+    }
+    
+    // NEW: Applicant details for employer view
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ApplicantDto {
+        private String userId;
+        private String name;
+        private String email;
     }
 }

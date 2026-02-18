@@ -37,6 +37,15 @@ public class Application {
     @Column(name = "resume_id")
     private String resumeId;
 
+    @Column(name = "resume_data", columnDefinition = "bytea")
+    private byte[] resumeData;
+
+    @Column(name = "resume_file_name")
+    private String resumeFileName;
+
+    @Column(name = "resume_content_type")
+    private String resumeContentType;
+
     @Column(name = "cover_letter", columnDefinition = "TEXT")
     private String coverLetter;
 
@@ -46,6 +55,9 @@ public class Application {
     @Column(name = "withdraw_reason")
     private String withdrawReason;
 
+    @Column(name = "rejection_reason")
+    private String rejectionReason;
+
     @CreationTimestamp
     @Column(name = "created_at")
     private Instant createdAt;
@@ -53,4 +65,10 @@ public class Application {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    @Column(name = "applicant_name")
+    private String applicantName;
+
+    @Column(name = "applicant_email")
+    private String applicantEmail;
 }

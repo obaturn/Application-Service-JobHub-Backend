@@ -4,6 +4,7 @@ import com.example.Application_Service.domain.entity.Job;
 import com.example.Application_Service.domain.entity.JobRecommendation;
 import com.example.Application_Service.domain.entity.RecommendationCache;
 import com.example.Application_Service.domain.entity.RecommendationFeedback;
+import com.example.Application_Service.domain.enums.JobStatus;
 import com.example.Application_Service.domain.enums.RecommendationFeedbackType;
 import com.example.Application_Service.dto.UserProfileDto;
 import com.example.Application_Service.dto.request.RecommendationFeedbackRequest;
@@ -14,6 +15,10 @@ import com.example.Application_Service.repository.RecommendationCacheRepository;
 import com.example.Application_Service.repository.RecommendationFeedbackRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
@@ -320,18 +325,65 @@ public class RecommendationService {
         log.info("Fetching recommendations for user {}, limit={}, page={}, refresh={}", 
             userId, limit, page, refresh);
 
-        // For now, use mock data (in production, fetch from cache)
-        List<RecommendationResponse.JobRecommendation> recommendations = getMockRecommendations();
-
+        // If refresh requested, recalculate recommendations
+        if (refresh) {
+            refreshRecommendations(userId);
+        }
+        
+        // Get recommendations from cache with pagination
+        Pageable pageable = PageRequest.of(page - 1, limit, Sort.by("matchScore").descending());
+        Page<RecommendationCache> cachedRecs = cacheRepository.findByUserId(userId, pageable);
+        
+        // If no cached recommendations, calculate and cache them
+        if (cachedRecs.isEmpty()) {
+            log.info("No cached recommendations for user {}, calculating...", userId);
+            UserProfileDto profile = fetchUserProfile(userId);
+            if (profile != null) {
+                List<Job> activeJobs = jobRepository.findByStatus(JobStatus.Published);
+                if (!activeJobs.isEmpty()) {
+                    recalculateAndCacheRecommendations(userId, profile, activeJobs);
+                    cachedRecs = cacheRepository.findByUserId(userId, pageable);
+                }
+            }
+        }
+        
+        // Map cached recommendations to response
+        List<RecommendationResponse.JobRecommendation> recommendations = cachedRecs.getContent().stream()
+            .map(cache -> {
+                Job job = jobRepository.findById(cache.getJobId()).orElse(null);
+                if (job == null) return null;
+                
+                return RecommendationResponse.JobRecommendation.builder()
+                    .id(job.getId())
+                    .title(job.getTitle())
+                    .company(job.getCompany())
+                    .companyId(job.getCompanyId())
+                    .location(job.getLocation())
+                    .type(job.getType())
+                    .salary(job.getSalary())
+                    .description(job.getDescription())
+                    .requirements(job.getResponsibilities())
+                    .isRemote(job.getIsRemote())
+                    .experienceLevel(job.getSeniority())
+                    .matchScore(cache.getMatchScore())
+                    .matchReasons(Arrays.asList(cache.getMatchReasons().split("; ")))
+                    .build();
+            })
+            .filter(Objects::nonNull)
+            .collect(Collectors.toList());
+        
+        Instant lastUpdated = cachedRecs.getContent().isEmpty() ? null : 
+            cachedRecs.getContent().get(0).getExpiresAt();
+        
         return RecommendationResponse.builder()
             .recommendations(recommendations)
             .pagination(PagedResponse.PaginationInfo.builder()
                 .page(page)
                 .limit(limit)
-                .total(recommendations.size())
-                .totalPages(1)
+                .total(cachedRecs.getTotalElements())
+                .totalPages(cachedRecs.getTotalPages())
                 .build())
-            .lastUpdated(Instant.now().toString())
+            .lastUpdated(lastUpdated != null ? lastUpdated.toString() : Instant.now().toString())
             .build();
     }
 
@@ -376,13 +428,50 @@ public class RecommendationService {
      */
     public Map<String, Object> refreshRecommendations(String userId) {
         log.info("Refreshing recommendations for user {}", userId);
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("message", "Recommendations refreshed successfully");
-        response.put("count", 2);
-        response.put("lastUpdated", Instant.now().toString());
-
-        return response;
+        
+        try {
+            // Fetch user profile
+            UserProfileDto profile = fetchUserProfile(userId);
+            if (profile == null) {
+                log.warn("Could not fetch profile for user {}, cannot refresh recommendations", userId);
+                Map<String, Object> response = new HashMap<>();
+                response.put("message", "Failed to refresh recommendations: profile not found");
+                response.put("success", false);
+                return response;
+            }
+            
+            // Get all active jobs
+            List<Job> activeJobs = jobRepository.findByStatus(JobStatus.Published);
+            
+            if (activeJobs.isEmpty()) {
+                log.info("No active jobs found for recommendations");
+                Map<String, Object> response = new HashMap<>();
+                response.put("message", "No active jobs available");
+                response.put("count", 0);
+                return response;
+            }
+            
+            // Recalculate and cache recommendations
+            recalculateAndCacheRecommendations(userId, profile, activeJobs);
+            
+            // Get count of cached recommendations
+            long count = cacheRepository.findByUserIdOrderByMatchScoreDesc(userId).size();
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Recommendations refreshed successfully");
+            response.put("count", count);
+            response.put("lastUpdated", Instant.now().toString());
+            response.put("success", true);
+            
+            return response;
+            
+        } catch (Exception e) {
+            log.error("Error refreshing recommendations for user {}: {}", userId, e.getMessage());
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Failed to refresh recommendations: " + e.getMessage());
+            response.put("success", false);
+            return response;
+        }
     }
 
     /**

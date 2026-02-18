@@ -19,12 +19,18 @@ public class ApplicationDetailsResponse {
     private String status;
     private String appliedDate;
     private String resumeId;
+    private String resumeFileName;  // NEW: For frontend
     private String coverLetter;
+    private String rejectionReason;
     private List<TimelineItem> timeline;
     private String employerNotes;
     private InterviewDetails interviewDetails;
     private String createdAt;
     private String updatedAt;
+    
+    // NEW: Applicant info for employer dashboard
+    private String applicantName;
+    private String applicantEmail;
 
     @Data
     @Builder

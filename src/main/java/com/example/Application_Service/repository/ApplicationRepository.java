@@ -32,4 +32,17 @@ public interface ApplicationRepository extends JpaRepository<Application, String
 
     @Query("SELECT a.status, COUNT(a) FROM Application a WHERE a.userId = :userId GROUP BY a.status")
     List<Object[]> countByStatusGrouped(@Param("userId") String userId);
+    
+    // Employer queries - applications for a specific job
+    Page<Application> findByJobId(Long jobId, Pageable pageable);
+    Page<Application> findByJobIdAndStatus(Long jobId, ApplicationStatus status, Pageable pageable);
+    
+    // Count applications for a job
+    long countByJobId(Long jobId);
+    
+    // Count applications by job and status
+    long countByJobIdAndStatus(Long jobId, ApplicationStatus status);
+    
+    // Find application by resume ID
+    Application findByResumeId(String resumeId);
 }

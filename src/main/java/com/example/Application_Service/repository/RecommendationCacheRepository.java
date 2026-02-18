@@ -1,6 +1,8 @@
 package com.example.Application_Service.repository;
 
 import com.example.Application_Service.domain.entity.RecommendationCache;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -14,6 +16,8 @@ import java.util.List;
 public interface RecommendationCacheRepository extends JpaRepository<RecommendationCache, String> {
     
     List<RecommendationCache> findByUserIdOrderByMatchScoreDesc(String userId);
+    
+    Page<RecommendationCache> findByUserId(String userId, Pageable pageable);
     
     @Query("SELECT rc FROM RecommendationCache rc WHERE rc.userId = :userId AND rc.expiresAt > :now ORDER BY rc.matchScore DESC")
     List<RecommendationCache> findValidRecommendations(@Param("userId") String userId, @Param("now") Instant now);

@@ -1,8 +1,13 @@
 package com.example.Application_Service.controller;
 
+import com.example.Application_Service.dto.request.CreateJobRequest;
 import com.example.Application_Service.dto.request.RecommendationFeedbackRequest;
+import com.example.Application_Service.dto.response.JobResponse;
+import com.example.Application_Service.dto.response.PagedJobsResponse;
+import com.example.Application_Service.dto.response.PagedResponse;
 import com.example.Application_Service.dto.response.RecommendationResponse;
 import com.example.Application_Service.dto.response.SavedJobsResponse;
+import com.example.Application_Service.service.JobService;
 import com.example.Application_Service.service.RecommendationService;
 import com.example.Application_Service.service.SavedJobService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,6 +32,66 @@ public class JobManagementController {
 
     private final SavedJobService savedJobService;
     private final RecommendationService recommendationService;
+    private final JobService jobService;
+
+    // ============== JOB CRUD ==============
+
+    @PostMapping
+    public ResponseEntity<JobResponse> createJob(
+        @Valid @RequestBody CreateJobRequest request,
+        HttpServletRequest httpRequest) {
+        
+        String employerId = extractUserId(httpRequest);
+        log.info("Creating job: {} for employer: {}", request.getTitle(), employerId);
+        
+        return ResponseEntity.ok(jobService.createJob(request, employerId));
+    }
+
+    @GetMapping
+    public ResponseEntity<PagedJobsResponse> getJobs(
+        @RequestParam(required = false) String employerId,
+        @RequestParam(required = false) String status,
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "20") int limit,
+        @RequestParam(defaultValue = "createdAt") String sortBy,
+        @RequestParam(defaultValue = "desc") String sortOrder,
+        HttpServletRequest request) {
+        
+        // If employerId provided, return employer's jobs
+        if (employerId != null && !employerId.isEmpty()) {
+            log.info("Fetching jobs for employer: {} with status: {}", employerId, status);
+            return ResponseEntity.ok(jobService.getJobsByEmployer(employerId, status, page, limit, sortBy, sortOrder));
+        }
+        
+        // Otherwise, return empty response (job seekers use different endpoint)
+        return ResponseEntity.ok(PagedJobsResponse.builder()
+                .jobs(java.util.Collections.emptyList())
+                .pagination(PagedResponse.PaginationInfo.builder()
+                        .page(page)
+                        .limit(limit)
+                        .total(0)
+                        .totalPages(0)
+                        .build())
+                .build());
+    }
+
+    @GetMapping("/{jobId}")
+    public ResponseEntity<JobResponse> getJobById(@PathVariable Long jobId) {
+        log.info("Fetching job by ID: {}", jobId);
+        return ResponseEntity.ok(jobService.getJobById(jobId));
+    }
+
+    @PutMapping("/{jobId}/status")
+    public ResponseEntity<JobResponse> updateJobStatus(
+        @PathVariable Long jobId,
+        @RequestParam String status,
+        HttpServletRequest httpRequest) {
+        
+        String employerId = extractUserId(httpRequest);
+        log.info("Updating job {} status to {} for employer: {}", jobId, status, employerId);
+        
+        return ResponseEntity.ok(jobService.updateJobStatus(jobId, status, employerId));
+    }
 
     // ============== SAVED JOBS ==============
 
