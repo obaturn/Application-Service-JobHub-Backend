@@ -35,6 +35,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,16 +50,13 @@ public class ApplicationService {
     private final ApplicationRepository applicationRepository;
     private final JobRepository jobRepository;
     private final ProfileEventProducer profileEventProducer;
-    private final UserProfileService userProfileService;
 
     public ApplicationService(ApplicationRepository applicationRepository, 
                               JobRepository jobRepository,
-                              ProfileEventProducer profileEventProducer,
-                              UserProfileService userProfileService) {
+                              ProfileEventProducer profileEventProducer) {
         this.applicationRepository = applicationRepository;
         this.jobRepository = jobRepository;
         this.profileEventProducer = profileEventProducer;
-        this.userProfileService = userProfileService;
     }
 
     /**
@@ -123,6 +121,92 @@ public class ApplicationService {
     public record ResumeData(byte[] data, String fileName, String contentType) {}
 
     /**
+     * Get resume and mark it as viewed.
+     * This method:
+     * 1. Retrieves the resume data
+     * 2. Updates application status to RESUME_VIEWED (if currently APPLIED)
+     * 3. Publishes Kafka event for notification
+     * 
+     * @param applicationId The application ID
+     * @param employerId The employer ID who is viewing the resume (for authorization)
+     * @return ResumeData with the resume file content
+     */
+    @Transactional
+    public ResumeData viewResume(String applicationId, String employerId) {
+        Application application = applicationRepository.findById(applicationId)
+            .orElseThrow(() -> new ApplicationNotFoundException("Application not found with ID: " + applicationId));
+        
+        // Get job to verify employer ownership
+        Job job = jobRepository.findById(application.getJobId())
+            .orElseThrow(() -> new JobNotFoundException("Job not found"));
+        
+        // Verify employer owns this job
+        if (!job.getEmployerId().equals(employerId)) {
+            throw new UnauthorizedAccessException("Employer does not have permission to view this resume");
+        }
+        
+        // Check if resume exists
+        if (application.getResumeData() == null) {
+            logger.error("No resume data found for application: {}", applicationId);
+            return null;
+        }
+        
+        // Update status to RESUME_VIEWED if currently APPLIED
+        boolean statusUpdated = false;
+        if (application.getStatus() == ApplicationStatus.APPLIED) {
+            ApplicationStatus oldStatus = application.getStatus();
+            application.setStatus(ApplicationStatus.RESUME_VIEWED);
+            application.setUpdatedAt(Instant.now());
+            applicationRepository.save(application);
+            statusUpdated = true;
+            logger.info("Application status updated from {} to {} for application: {}", 
+                oldStatus, ApplicationStatus.RESUME_VIEWED, applicationId);
+        }
+        
+        // Publish Kafka event for RESUME_VIEWED
+        // We publish the event regardless of whether status was updated (to handle re-viewing)
+        try {
+            // Use stored applicant details from the application
+            String applicantName = application.getApplicantName();
+            String applicantEmail = application.getApplicantEmail();
+            
+            ApplicationEventData eventData = ApplicationEventData.resumeViewedApplication(
+                application.getId(),
+                job.getId(),
+                job.getTitle(),
+                job.getCompany(),
+                job.getCompanyId(),
+                job.getEmployerId(),
+                application.getUserId(),
+                applicantName,
+                applicantEmail
+            );
+            
+            // Use afterCommit to ensure Kafka event is published only after transaction commits
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    try {
+                        profileEventProducer.publishEnhancedApplicationEvent(eventData);
+                        logger.info("RESUME_VIEWED Kafka event published for application: {}", applicationId);
+                    } catch (Exception e) {
+                        logger.error("Failed to publish RESUME_VIEWED event: {}", e.getMessage());
+                    }
+                }
+            });
+        } catch (Exception e) {
+            logger.error("Failed to prepare RESUME_VIEWED event: {}", e.getMessage());
+            // Don't fail the resume view if event publishing fails
+        }
+        
+        return new ResumeData(
+            application.getResumeData(),
+            application.getResumeFileName(),
+            application.getResumeContentType()
+        );
+    }
+
+    /**
      * Get resume URL by resume ID
      * 
      * @param resumeId The resume ID
@@ -153,17 +237,9 @@ public class ApplicationService {
             throw new AlreadyAppliedException("User has already applied for this job");
         }
         
-        // Get applicant details from User Profile service
-        String applicantName = userProfileService.getUserName(userId);
-        String applicantEmail = userProfileService.getUserEmail(userId);
-        
-        // Fallback to request values if profile service fails or returns unknown
-        if ((applicantName == null || applicantName.equals("Unknown User")) && request.getApplicantName() != null) {
-            applicantName = request.getApplicantName();
-        }
-        if (applicantEmail == null && request.getApplicantEmail() != null) {
-            applicantEmail = request.getApplicantEmail();
-        }
+        // Get applicant details directly from request (provided by frontend/API Gateway)
+        String applicantName = request.getApplicantName();
+        String applicantEmail = request.getApplicantEmail();
 
         // Create new application
         Application application = new Application();
@@ -178,6 +254,7 @@ public class ApplicationService {
         application.setApplicantEmail(applicantEmail);
         
         // Handle resume file upload - store in database
+        // Check for multipart file first, then check for base64 encoded data
         if (request.getResume() != null && !request.getResume().isEmpty()) {
             try {
                 application.setResumeData(request.getResume().getBytes());
@@ -187,11 +264,28 @@ public class ApplicationService {
                 if (application.getResumeId() == null || application.getResumeId().isEmpty()) {
                     application.setResumeId(UUID.randomUUID().toString());
                 }
-                logger.info("Resume file uploaded: {}, size: {} bytes", 
+                logger.info("Resume file uploaded (multipart): {}, size: {} bytes", 
                     application.getResumeFileName(), application.getResumeData().length);
             } catch (IOException e) {
                 logger.error("Failed to process resume file: {}", e.getMessage());
                 throw new RuntimeException("Failed to process resume file", e);
+            }
+        } else if (request.getResumeData() != null && !request.getResumeData().isEmpty()) {
+            // Handle base64 encoded resume data (from JSON requests)
+            try {
+                byte[] decodedBytes = Base64.getDecoder().decode(request.getResumeData());
+                application.setResumeData(decodedBytes);
+                application.setResumeFileName(request.getResumeFileName() != null ? request.getResumeFileName() : "resume.pdf");
+                application.setResumeContentType(request.getResumeContentType() != null ? request.getResumeContentType() : "application/pdf");
+                // Generate a unique resume ID if not provided
+                if (application.getResumeId() == null || application.getResumeId().isEmpty()) {
+                    application.setResumeId(UUID.randomUUID().toString());
+                }
+                logger.info("Resume file uploaded (base64): {}, size: {} bytes", 
+                    application.getResumeFileName(), application.getResumeData().length);
+            } catch (IllegalArgumentException e) {
+                logger.error("Failed to decode base64 resume data: {}", e.getMessage());
+                throw new RuntimeException("Failed to decode resume data", e);
             }
         }
         
@@ -361,9 +455,9 @@ public class ApplicationService {
         
         // Publish enhanced withdrawal event
         try {
-            // Fetch applicant details from User Profile service
-            String applicantName = userProfileService.getUserName(application.getUserId());
-            String applicantEmail = userProfileService.getUserEmail(application.getUserId());
+            // Use stored applicant details from the application
+            String applicantName = application.getApplicantName();
+            String applicantEmail = application.getApplicantEmail();
             
             ApplicationEventData eventData = ApplicationEventData.withdrawnApplication(
                 application.getId(),
@@ -422,9 +516,9 @@ public class ApplicationService {
         
         // Publish enhanced status update event
         try {
-            // Fetch applicant details from User Profile service
-            String applicantName = userProfileService.getUserName(application.getUserId());
-            String applicantEmail = userProfileService.getUserEmail(application.getUserId());
+            // Use stored applicant details from the application
+            String applicantName = application.getApplicantName();
+            String applicantEmail = application.getApplicantEmail();
             
             ApplicationEventData eventData = ApplicationEventData.statusUpdatedApplication(
                 application.getId(),

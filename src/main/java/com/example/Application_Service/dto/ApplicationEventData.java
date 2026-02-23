@@ -153,4 +153,35 @@ public class ApplicationEventData {
                 .timestamp(LocalDateTime.now())
                 .build();
     }
+    
+    /**
+     * Factory method for RESUME_VIEWED event
+     * Triggered when employer views/downloads applicant's resume
+     */
+    public static ApplicationEventData resumeViewedApplication(
+            String applicationId,
+            Long jobId,
+            String jobTitle,
+            String companyName,
+            String companyId,
+            String employerId,
+            String userId,
+            String applicantName,
+            String applicantEmail) {
+        
+        return ApplicationEventData.builder()
+                .eventType("RESUME_VIEWED")
+                .applicationId(applicationId)
+                .jobId(jobId)
+                .jobTitle(jobTitle)
+                .companyName(companyName)
+                .companyId(companyId)
+                .employerId(employerId)
+                .userId(userId)
+                .applicantName(applicantName)
+                .applicantEmail(applicantEmail)
+                .status("RESUME_VIEWED")
+                .timestamp(LocalDateTime.now())
+                .build();
+    }
 }

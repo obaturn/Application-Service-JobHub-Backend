@@ -36,7 +36,34 @@ public class ApplicationController {
         HttpServletRequest httpRequest) {
         
         String userId = extractUserId(httpRequest);
-        log.info("Received application submission request from user: {}", userId);
+        log.info("Received application submission request from user: {}");
+        
+        return ResponseEntity.status(HttpStatus.CREATED)
+            .body(applicationService.submitApplication(request, userId));
+    }
+    
+    /**
+     * Submit application with resume as base64 encoded string in JSON.
+     * This endpoint accepts JSON with the resume file encoded as base64.
+     * 
+     * Request body should be:
+     * {
+     *   "jobId": 123,
+     *   "coverLetter": "...",
+     *   "applicantName": "John Doe",
+     *   "applicantEmail": "john@example.com",
+     *   "resumeFileName": "resume.pdf",
+     *   "resumeContentType": "application/pdf",
+     *   "resumeData": "base64encodedstring..."
+     * }
+     */
+    @PostMapping("/json")
+    public ResponseEntity<ApplicationDetailsResponse> submitApplicationWithJson(
+        @Valid @RequestBody SubmitApplicationRequest request,
+        HttpServletRequest httpRequest) {
+        
+        String userId = extractUserId(httpRequest);
+        log.info("Received application submission (JSON with resume) from user: {}", userId);
         
         return ResponseEntity.status(HttpStatus.CREATED)
             .body(applicationService.submitApplication(request, userId));
@@ -45,8 +72,13 @@ public class ApplicationController {
     /**
      * Submit application with resume file upload.
      * This endpoint accepts multipart/form-data with the resume file.
+     * 
+     * Frontend should send:
+     * - Content-Type: multipart/form-data
+     * - Part "request": JSON object with application details (Content-Type: application/json)
+     * - Part "resume": The resume file (optional)
      */
-    @PostMapping("/with-resume")
+    @PostMapping(value = "/with-resume", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApplicationDetailsResponse> submitApplicationWithResume(
         @Valid @RequestPart("request") SubmitApplicationRequest request,
         @RequestPart(value = "resume", required = false) org.springframework.web.multipart.MultipartFile resume,
@@ -58,6 +90,10 @@ public class ApplicationController {
         // Handle resume file upload
         if (resume != null && !resume.isEmpty()) {
             request.setResume(resume);
+            log.info("Resume file received: {}, size: {} bytes, content-type: {}", 
+                resume.getOriginalFilename(), resume.getSize(), resume.getContentType());
+        } else {
+            log.info("No resume file included in the request");
         }
         
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -143,6 +179,8 @@ public class ApplicationController {
     /**
      * View resume for an application.
      * Only the employer who owns the job can view resumes.
+     * When resume is viewed, the application status is updated to RESUME_VIEWED
+     * and a Kafka event is published to notify the job seeker.
      * 
      * @param applicationId The application ID
      * @param httpRequest HTTP request with user context
@@ -156,16 +194,12 @@ public class ApplicationController {
         String userId = extractUserId(httpRequest);
         log.info("Resume view requested for application: {} by user: {}", applicationId, userId);
         
-        // Get application details first to verify access
-        ApplicationDetailsResponse application = applicationService.getApplicationById(applicationId, userId, "EMPLOYER");
-        
-        // Verify employer owns this job
-        if (application.getJob() != null && !application.getJob().getEmployerId().equals(userId)) {
-             throw new UnauthorizedAccessException("Not authorized to view this resume");
-        }
-        
-        // Get resume file content directly from database (no external call)
-        ApplicationService.ResumeData resumeData = applicationService.getResumeByApplicationId(applicationId);
+        // Use the new viewResume method which:
+        // 1. Verifies employer owns the job
+        // 2. Updates status to RESUME_VIEWED if currently APPLIED
+        // 3. Publishes Kafka event for notification
+        // 4. Returns the resume data
+        ApplicationService.ResumeData resumeData = applicationService.viewResume(applicationId, userId);
         
         if (resumeData != null && resumeData.data() != null) {
             HttpHeaders headers = new HttpHeaders();
@@ -190,7 +224,7 @@ public class ApplicationController {
     /**
      * Extracts userId from API Gateway headers.
      * The API Gateway validates JWT tokens and forwards user info via headers.
-     * 
+     * <p>
      * Expected headers from API Gateway:
      * - X-User-Id: The user's UUID
      * - X-User-Email: The user's email (optional)

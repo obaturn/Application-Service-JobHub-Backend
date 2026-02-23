@@ -17,7 +17,7 @@ public class SubmitApplicationRequest {
     private Long jobId;
 
     /**
-     * Resume file upload (PDF, DOC, DOCX)
+     * Resume file upload (PDF, DOC, DOCX) - for multipart/form-data
      */
     private MultipartFile resume;
 
@@ -36,6 +36,22 @@ public class SubmitApplicationRequest {
      */
     private String applicantName;
     private String applicantEmail;
+
+    /**
+     * Resume data as base64 encoded string (for JSON requests)
+     */
+    private String resumeData;
+
+    /**
+     * Original filename of the resume (for JSON requests)
+     */
+    private String resumeFileName;
+
+    /**
+     * Content type of the resume (for JSON requests)
+     * e.g., application/pdf, application/docx
+     */
+    private String resumeContentType;
 
     @Data
     @NoArgsConstructor
