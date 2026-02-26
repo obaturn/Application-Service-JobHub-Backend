@@ -159,11 +159,13 @@ public class ProfileEventConsumer {
 
     /**
      * Trigger recommendation recalculation for a user
+     * Note: This is called from Kafka consumer, so we pass null for authToken
+     * The profile data should already be available or fetched without auth for internal calls
      */
     private void triggerRecommendationRecalculation(String userId) {
         try {
-            // Fetch user's complete profile from Auth Service
-            UserProfileDto userProfile = recommendationService.fetchUserProfile(userId);
+            // Fetch user's complete profile from Auth Service (internal call - may not need auth)
+            UserProfileDto userProfile = recommendationService.fetchUserProfile(userId, null);
 
             if (userProfile == null) {
                 logger.warn("Could not fetch profile for user: {}", userId);
@@ -171,7 +173,7 @@ public class ProfileEventConsumer {
             }
 
             // Get all active jobs
-            List<Job> activeJobs = jobRepository.findByStatus(JobStatus.Published);
+            List<Job> activeJobs = jobRepository.findByStatus(JobStatus.Published.name());
 
             if (activeJobs.isEmpty()) {
                 logger.info("No active jobs found for recommendations");

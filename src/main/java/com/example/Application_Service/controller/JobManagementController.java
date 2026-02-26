@@ -149,17 +149,19 @@ public class JobManagementController {
         HttpServletRequest request) {
         
         String userId = extractUserId(request);
+        String authToken = extractAuthToken(request);
         log.info("Fetching recommendations for user: {}", userId);
         
-        return ResponseEntity.ok(recommendationService.getRecommendations(userId, limit, page, refresh));
+        return ResponseEntity.ok(recommendationService.getRecommendations(userId, authToken, limit, page, refresh));
     }
 
     @GetMapping("/recommendations/refresh")
     public ResponseEntity<Map<String, Object>> refreshRecommendations(HttpServletRequest request) {
         String userId = extractUserId(request);
+        String authToken = extractAuthToken(request);
         log.info("Refreshing recommendations for user: {}", userId);
         
-        return ResponseEntity.ok(recommendationService.refreshRecommendations(userId));
+        return ResponseEntity.ok(recommendationService.refreshRecommendations(userId, authToken));
     }
 
     @PostMapping("/recommendations/feedback")
@@ -209,6 +211,17 @@ public class JobManagementController {
             log.error("Error extracting user ID from token: {}", e.getMessage());
             throw new UnauthorizedException("Invalid token: " + e.getMessage());
         }
+    }
+
+    /**
+     * Extract Bearer token from Authorization header
+     */
+    private String extractAuthToken(HttpServletRequest request) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            return authHeader.substring(7); // Remove "Bearer " prefix
+        }
+        return null;
     }
 
 

@@ -22,7 +22,7 @@ public interface RecommendationCacheRepository extends JpaRepository<Recommendat
     @Query("SELECT rc FROM RecommendationCache rc WHERE rc.userId = :userId AND rc.expiresAt > :now ORDER BY rc.matchScore DESC")
     List<RecommendationCache> findValidRecommendations(@Param("userId") String userId, @Param("now") Instant now);
     
-    @Modifying
+    @Modifying(clearAutomatically = true)
     @Query("DELETE FROM RecommendationCache rc WHERE rc.userId = :userId")
     void deleteByUserId(@Param("userId") String userId);
     

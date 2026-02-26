@@ -11,13 +11,13 @@ import java.util.List;
 
 @Repository
 public interface JobRepository extends JpaRepository<Job, Long> {
-    List<Job> findByStatus(JobStatus status);
-    List<Job> findByStatusAndSeniority(JobStatus status, String seniority);
-    List<Job> findByStatusAndLocationContainingIgnoreCase(JobStatus status, String location);
+    List<Job> findByStatus(String status);
+    List<Job> findByStatusAndSeniority(String status, String seniority);
+    List<Job> findByStatusAndLocationContainingIgnoreCase(String status, String location);
     
     // Employer queries
     Page<Job> findByEmployerId(String employerId, Pageable pageable);
-    Page<Job> findByEmployerIdAndStatus(String employerId, JobStatus status, Pageable pageable);
+    Page<Job> findByEmployerIdAndStatus(String employerId, String status, Pageable pageable);
     List<Job> findByEmployerId(String employerId);
     long countByEmployerId(String employerId);
 }

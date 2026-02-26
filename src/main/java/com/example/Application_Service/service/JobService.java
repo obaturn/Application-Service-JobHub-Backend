@@ -69,7 +69,7 @@ public class JobService {
         if (status != null && !status.isEmpty()) {
             try {
                 JobStatus jobStatus = JobStatus.valueOf(status.toUpperCase());
-                jobs = jobRepository.findByEmployerIdAndStatus(employerId, jobStatus, pageable);
+                jobs = jobRepository.findByEmployerIdAndStatus(employerId, jobStatus.name(), pageable);
             } catch (IllegalArgumentException e) {
                 log.warn("Invalid status filter: {}", status);
                 jobs = jobRepository.findByEmployerId(employerId, pageable);

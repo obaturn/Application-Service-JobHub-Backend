@@ -1,5 +1,9 @@
 package com.example.Application_Service.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.core.ParameterizedTypeReference;
 import com.example.Application_Service.domain.entity.Job;
 import com.example.Application_Service.domain.entity.JobRecommendation;
 import com.example.Application_Service.domain.entity.RecommendationCache;
@@ -55,22 +59,164 @@ public class RecommendationService {
 
     /**
      * Fetch user profile from Auth Service via REST API
-     * Calls: GET {authServiceUrl}/api/v1/auth/profile/full/{userId}
+     * Aggregates data from multiple endpoints:
+     * - GET /api/v1/auth/profile (basic info: location, openToRemote, yearsOfExperience)
+     * - GET /api/v1/auth/profile/skills (user skills)
+     * - GET /api/v1/auth/profile/experience (user experience)
+     * - GET /api/v1/auth/profile/education (user education)
+     * 
+     * @param userId The user ID
+     * @param authToken Bearer token for authentication with Auth Service (optional - can be null for public endpoints)
      */
-    public UserProfileDto fetchUserProfile(String userId) {
+    public UserProfileDto fetchUserProfile(String userId, String authToken) {
         try {
-            String url = authServiceUrl + "/api/v1/auth/profile/full/" + userId;
-            log.info("Fetching user profile from: {}", url);
+            ObjectMapper mapper = new ObjectMapper();
+            UserProfileDto.UserProfileDtoBuilder builder = UserProfileDto.builder();
             
-            UserProfileDto profile = restTemplate.getForObject(url, UserProfileDto.class);
-            
-            if (profile != null) {
-                log.info("Successfully fetched profile for user: {}, skills={}, experience={}, education={}",
-                    userId,
-                    profile.getSkills() != null ? profile.getSkills().size() : 0,
-                    profile.getExperience() != null ? profile.getExperience().size() : 0,
-                    profile.getEducation() != null ? profile.getEducation().size() : 0);
+            // Create headers with Bearer token if provided
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            if (authToken != null && !authToken.isEmpty()) {
+                headers.set("Authorization", "Bearer " + authToken);
             }
+            org.springframework.http.HttpEntity<String> entity = new org.springframework.http.HttpEntity<>(headers);
+            
+            // Fetch basic profile (location, openToRemote, yearsOfExperience)
+            try {
+                String profileUrl = authServiceUrl + "/api/v1/auth/profile";
+                log.info("Fetching basic profile from: {}", profileUrl);
+                
+                org.springframework.http.ResponseEntity<String> profileResponse = restTemplate.exchange(
+                    profileUrl, 
+                    org.springframework.http.HttpMethod.GET, 
+                    entity, 
+                    String.class
+                );
+                String profileJson = profileResponse.getBody();
+                JsonNode profileNode = mapper.readTree(profileJson);
+                
+                if (profileNode.has("location")) {
+                    builder.location(profileNode.get("location").asText());
+                }
+                if (profileNode.has("remotePreference") || profileNode.has("openToRemote")) {
+                    JsonNode remoteNode = profileNode.get("remotePreference") != null ? 
+                        profileNode.get("remotePreference") : profileNode.get("openToRemote");
+                    builder.openToRemote(remoteNode != null && remoteNode.asText().equalsIgnoreCase("yes"));
+                }
+                if (profileNode.has("yearsOfExperience")) {
+                    builder.yearsOfExperience(profileNode.get("yearsOfExperience").asInt());
+                }
+                log.info("Basic profile: location={}, openToRemote={}, yearsOfExperience={}",
+                    builder.build().getLocation(), builder.build().getOpenToRemote(), builder.build().getYearsOfExperience());
+            } catch (Exception e) {
+                log.warn("Failed to fetch basic profile: {}", e.getMessage());
+            }
+            
+            // Fetch skills
+            try {
+                String skillsUrl = authServiceUrl + "/api/v1/auth/profile/skills";
+                log.info("Fetching skills from: {}", skillsUrl);
+                
+                org.springframework.http.ResponseEntity<String> skillsResponse = restTemplate.exchange(
+                    skillsUrl, 
+                    org.springframework.http.HttpMethod.GET, 
+                    entity, 
+                    String.class
+                );
+                String skillsJson = skillsResponse.getBody();
+                JsonNode skillsArray = mapper.readTree(skillsJson);
+                
+                List<UserProfileDto.SkillDto> skills = new ArrayList<>();
+                for (JsonNode skillNode : skillsArray) {
+                    UserProfileDto.SkillDto skillDto = UserProfileDto.SkillDto.builder()
+                        .id(skillNode.has("id") ? skillNode.get("id").asText() : null)
+                        .name(skillNode.has("name") ? skillNode.get("name").asText() : null)
+                        .category(skillNode.has("category") ? skillNode.get("category").asText() : null)
+                        .proficiencyLevel(skillNode.has("proficiencyLevel") ? skillNode.get("proficiencyLevel").asText() : null)
+                        .yearsOfExperience(skillNode.has("yearsOfExperience") ? skillNode.get("yearsOfExperience").asInt() : null)
+                        .build();
+                    skills.add(skillDto);
+                }
+                builder.skills(skills);
+                log.info("Fetched {} skills", skills.size());
+            } catch (Exception e) {
+                log.warn("Failed to fetch skills: {}", e.getMessage());
+                builder.skills(Collections.emptyList());
+            }
+            
+            // Fetch experience
+            try {
+                String expUrl = authServiceUrl + "/api/v1/auth/profile/experience";
+                log.info("Fetching experience from: {}", expUrl);
+                
+                org.springframework.http.ResponseEntity<String> expResponse = restTemplate.exchange(
+                    expUrl, 
+                    org.springframework.http.HttpMethod.GET, 
+                    entity, 
+                    String.class
+                );
+                String expJson = expResponse.getBody();
+                JsonNode expArray = mapper.readTree(expJson);
+                
+                List<UserProfileDto.ExperienceDto> experienceList = new ArrayList<>();
+                for (JsonNode expNode : expArray) {
+                    UserProfileDto.ExperienceDto expDto = UserProfileDto.ExperienceDto.builder()
+                        .id(expNode.has("id") ? expNode.get("id").asText() : null)
+                        .companyName(expNode.has("companyName") ? expNode.get("companyName").asText() : null)
+                        .jobTitle(expNode.has("jobTitle") ? expNode.get("jobTitle").asText() : null)
+                        .location(expNode.has("location") ? expNode.get("location").asText() : null)
+                        .isRemote(expNode.has("isRemote") ? expNode.get("isRemote").asBoolean() : null)
+                        .isCurrentPosition(expNode.has("isCurrentPosition") ? expNode.get("isCurrentPosition").asBoolean() : null)
+                        .employmentType(expNode.has("employmentType") ? expNode.get("employmentType").asText() : null)
+                        .build();
+                    experienceList.add(expDto);
+                }
+                builder.experience(experienceList);
+                log.info("Fetched {} experience entries", experienceList.size());
+            } catch (Exception e) {
+                log.warn("Failed to fetch experience: {}", e.getMessage());
+                builder.experience(Collections.emptyList());
+            }
+            
+            // Fetch education
+            try {
+                String eduUrl = authServiceUrl + "/api/v1/auth/profile/education";
+                log.info("Fetching education from: {}", eduUrl);
+                
+                org.springframework.http.ResponseEntity<String> eduResponse = restTemplate.exchange(
+                    eduUrl, 
+                    org.springframework.http.HttpMethod.GET, 
+                    entity, 
+                    String.class
+                );
+                String eduJson = eduResponse.getBody();
+                JsonNode eduArray = mapper.readTree(eduJson);
+                
+                List<UserProfileDto.EducationDto> educationList = new ArrayList<>();
+                for (JsonNode eduNode : eduArray) {
+                    UserProfileDto.EducationDto eduDto = UserProfileDto.EducationDto.builder()
+                        .id(eduNode.has("id") ? eduNode.get("id").asText() : null)
+                        .institutionName(eduNode.has("institutionName") ? eduNode.get("institutionName").asText() : null)
+                        .degree(eduNode.has("degree") ? eduNode.get("degree").asText() : null)
+                        .fieldOfStudy(eduNode.has("fieldOfStudy") ? eduNode.get("fieldOfStudy").asText() : null)
+                        .location(eduNode.has("location") ? eduNode.get("location").asText() : null)
+                        .gpa(eduNode.has("gpa") && !eduNode.get("gpa").isNull() ? eduNode.get("gpa").asDouble() : null)
+                        .build();
+                    educationList.add(eduDto);
+                }
+                builder.education(educationList);
+                log.info("Fetched {} education entries", educationList.size());
+            } catch (Exception e) {
+                log.warn("Failed to fetch education: {}", e.getMessage());
+                builder.education(Collections.emptyList());
+            }
+            
+            UserProfileDto profile = builder.build();
+            
+            log.info("Successfully fetched profile for user: {}, skills={}, experience={}, education={}",
+                userId,
+                profile.getSkills() != null ? profile.getSkills().size() : 0,
+                profile.getExperience() != null ? profile.getExperience().size() : 0,
+                profile.getEducation() != null ? profile.getEducation().size() : 0);
             
             return profile;
         } catch (Exception e) {
@@ -83,6 +229,7 @@ public class RecommendationService {
      * Recalculate and cache recommendations for a user after profile change
      * This is called by ProfileEventConsumer when user updates skills/experience/education
      */
+    @Transactional
     public void recalculateAndCacheRecommendations(String userId, UserProfileDto profile, List<Job> jobs) {
         log.info("Recalculating recommendations for user: {}, jobs={}", userId, jobs.size());
 
@@ -320,14 +467,21 @@ public class RecommendationService {
 
     /**
      * Get recommendations for user (from cache or calculate on-demand)
+     * 
+     * @param userId The user ID
+     * @param authToken Bearer token for authentication with Auth Service
+     * @param limit Maximum number of recommendations to return
+     * @param page Page number (1-indexed)
+     * @param refresh Whether to force recalculation of recommendations
      */
-    public RecommendationResponse getRecommendations(String userId, int limit, int page, boolean refresh) {
+    @Transactional
+    public RecommendationResponse getRecommendations(String userId, String authToken, int limit, int page, boolean refresh) {
         log.info("Fetching recommendations for user {}, limit={}, page={}, refresh={}", 
             userId, limit, page, refresh);
 
         // If refresh requested, recalculate recommendations
         if (refresh) {
-            refreshRecommendations(userId);
+            refreshRecommendations(userId, authToken);
         }
         
         // Get recommendations from cache with pagination
@@ -337,14 +491,36 @@ public class RecommendationService {
         // If no cached recommendations, calculate and cache them
         if (cachedRecs.isEmpty()) {
             log.info("No cached recommendations for user {}, calculating...", userId);
-            UserProfileDto profile = fetchUserProfile(userId);
-            if (profile != null) {
-                List<Job> activeJobs = jobRepository.findByStatus(JobStatus.Published);
-                if (!activeJobs.isEmpty()) {
+            UserProfileDto profile = fetchUserProfile(userId, authToken);
+            
+            if (profile == null) {
+                log.warn("⚠️ PROFILE FETCH FAILED for user {} - cannot calculate recommendations", userId);
+                log.warn("   Check: 1) Auth Service running on port 8081? 2) User has profile data?");
+            } else {
+                log.info("✅ Profile fetched successfully for user {}: skills={}, experience={}, education={}, location={}, yearsExp={}",
+                    userId,
+                    profile.getSkills() != null ? profile.getSkills().size() : 0,
+                    profile.getExperience() != null ? profile.getExperience().size() : 0,
+                    profile.getEducation() != null ? profile.getEducation().size() : 0,
+                    profile.getLocation(),
+                    profile.getYearsOfExperience());
+                
+                List<Job> activeJobs = jobRepository.findByStatus(JobStatus.Published.name());
+                log.info("Found {} published jobs in database", activeJobs.size());
+                
+                if (activeJobs.isEmpty()) {
+                    log.warn("⚠️ NO PUBLISHED JOBS in database - cannot generate recommendations");
+                    log.warn("   Jobs need status='Published' to be recommended");
+                } else {
+                    log.info("Calculating recommendations for {} jobs...", activeJobs.size());
                     recalculateAndCacheRecommendations(userId, profile, activeJobs);
                     cachedRecs = cacheRepository.findByUserId(userId, pageable);
+                    log.info("✅ Cached {} recommendations for user {} (threshold: {}%)", 
+                        cachedRecs.getContent().size(), userId, MIN_MATCH_THRESHOLD);
                 }
             }
+        } else {
+            log.info("Found {} cached recommendations for user {}", cachedRecs.getContent().size(), userId);
         }
         
         // Map cached recommendations to response
@@ -425,13 +601,16 @@ public class RecommendationService {
 
     /**
      * Refresh recommendations for user
+     * 
+     * @param userId The user ID
+     * @param authToken Bearer token for authentication with Auth Service
      */
-    public Map<String, Object> refreshRecommendations(String userId) {
+    public Map<String, Object> refreshRecommendations(String userId, String authToken) {
         log.info("Refreshing recommendations for user {}", userId);
         
         try {
             // Fetch user profile
-            UserProfileDto profile = fetchUserProfile(userId);
+            UserProfileDto profile = fetchUserProfile(userId, authToken);
             if (profile == null) {
                 log.warn("Could not fetch profile for user {}, cannot refresh recommendations", userId);
                 Map<String, Object> response = new HashMap<>();
@@ -441,7 +620,7 @@ public class RecommendationService {
             }
             
             // Get all active jobs
-            List<Job> activeJobs = jobRepository.findByStatus(JobStatus.Published);
+            List<Job> activeJobs = jobRepository.findByStatus(JobStatus.Published.name());
             
             if (activeJobs.isEmpty()) {
                 log.info("No active jobs found for recommendations");
